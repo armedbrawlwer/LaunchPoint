@@ -9,10 +9,10 @@ import mime from 'mime-types'
 const __dirname = path.resolve()
 
 const s3client = new S3Client({
-    region: "ap-south-1",
+    region: "",
     credentials: {
-        accessKeyId: 'AKIA3FLD4SMG4CM6FEX5',
-        secretAccessKey: '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'
+        accessKeyId: '',
+        secretAccessKey: '/8Rq7XjG+go7KfDiV5MsRLBfk3eR'
     }
 })
 
@@ -22,14 +22,14 @@ const Deployment_Id = process.env.Deployment_Id
 
 const kafka = new Kafka({
     clientId: `docker-server-build-${project_id}`,
-    brokers: ['kafka-d15b351-vercelclonenit.g.aivencloud.com:16248'],
+    brokers: [''],
     ssl: {
-        ca: [fs.readFileSync(path.join(__dirname, 'kafka.pem'), 'utf-8')]
+        // ca: [fs.readFileSync(path.join(__dirname, 'kafka.pem'), 'utf-8')]
     },
     sasl: {
-        username: 'avnadmin',
-        password: 'AVNS_wlgt-_13yTSplw5vrzE',
-        mechanism: 'plain'
+        username: '',
+        password: '',
+        mechanism: ''
     }
 })
 
