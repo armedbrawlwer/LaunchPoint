@@ -1,72 +1,71 @@
-import express from 'express'
-import { Redis } from 'ioredis'
-import { PrismaClient } from '@prisma/client'
-import { ECSClient, RunTaskCommand } from '@aws-sdk/client-ecs'
-import { createClient } from '@clickhouse/client'
-import { Kafka } from 'kafkajs'
-import fs from 'fs'
-import path from 'path'
+import express from 'express';
+import { Redis } from 'ioredis';
+import { PrismaClient } from '@prisma/client';
+import { ECSClient, RunTaskCommand } from '@aws-sdk/client-ecs';
+import { createClient } from '@clickhouse/client';
+import { Kafka } from 'kafkajs';
+import fs from 'fs';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import dotenv from 'dotenv';
 
+dotenv.config();
 
-const __dirname = path.resolve()
-const prismaClient = new PrismaClient()
-const subscriber = new Redis('rediss://default:AVNS_hdBsx-1bttYrCcV2waN@caching-1e9117e8-vercelclonenit.l.aivencloud.com:16236')
+const prismaClient = new PrismaClient();
+const subscriber = new Redis(process.env.REDIS_URL);
+
 const client = createClient({
-    url: 'https://avnadmin:AVNS_BqXfRsdV9Ds6-BUAX84@clickhouse-250c669d-vercelclonenit.g.aivencloud.com:16236',
-    database: 'default',
-    username: 'avnadmin',
-    password: 'AVNS_BqXfRsdV9Ds6-BUAX84'
-})
-
+    url: process.env.CLICKHOUSE_URL,
+    database: process.env.CLICKHOUSE_DATABASE,
+    username: process.env.CLICKHOUSE_USERNAME,
+    password: process.env.CLICKHOUSE_PASSWORD
+});
 
 const ecsClient = new ECSClient({
-    region: 'ap-south-1',
+    region: process.env.AWS_REGION,
     credentials: {
-        accessKeyId: 'AKIA3FLD4SMG4CM6FEX5',
-        secretAccessKey: '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'
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
     }
-})
+});
 
 const config = {
-    CLUSTER: 'arn:aws:ecs:ap-south-1:767398023949:cluster/builder-cluster-nit',
-    TASKDEFINIION: 'arn:aws:ecs:ap-south-1:767398023949:task-definition/builder-task'
-}
+    CLUSTER: process.env.AWS_CLUSTER,
+    TASK_DEFINITION: process.env.AWS_TASK_DEFINITION
+};
 
 const kafka = new Kafka({
-    clientId: `worker-server`,
-    brokers: ['kafka-d15b351-vercelclonenit.g.aivencloud.com:16248'],
+    clientId: process.env.KAFKA_CLIENT_ID,
+    brokers: [process.env.KAFKA_BROKERS],
     ssl: {
-        ca: [fs.readFileSync(path.join(__dirname, 'kafka.pem'), 'utf-8')]
+        ca: [fs.readFileSync(process.env.KAFKA_SSL_CA, 'utf-8')]
     },
     sasl: {
-        username: 'avnadmin',
-        password: 'AVNS_wlgt-_13yTSplw5vrzE',
+        username: process.env.KAFKA_SASL_USERNAME,
+        password: process.env.KAFKA_SASL_PASSWORD,
         mechanism: 'plain'
     }
-})
-const consumer = kafka.consumer({ groupId: 'consumer-logs' })
-
+});
+const consumer = kafka.consumer({ groupId: 'consumer-logs' });
 
 subscriber.subscribe('deployments', (err, count) => {
     if (err) {
-        console.log(`could not subscribe to channel`)
+        console.log(`could not subscribe to channel`);
     } else {
-        console.log('subscribed successfully')
-
+        console.log('subscribed successfully');
     }
-})
+});
 
 subscriber.on("message", async (channel, message) => {
     if (channel === 'deployments') {
-        const id = message.toString()
-        console.log(`recievedMessage:${id}`)
+        const id = message.toString();
+        console.log(`receivedMessage:${id}`);
         const deployment = await prismaClient.deployement.findUnique({
             where: {
                 id: id
             }
         });
-        console.log(deployment)
+        console.log(deployment);
         if (!deployment) {
             throw new Error(`Deployment with id ${id} not found`);
         }
@@ -77,10 +76,10 @@ subscriber.on("message", async (channel, message) => {
             }
         });
 
-        //spin the container
+        // Spin the container
         const command = new RunTaskCommand({
             cluster: config.CLUSTER,
-            taskDefinition: config.TASKDEFINIION,
+            taskDefinition: config.TASK_DEFINITION,
             launchType: 'FARGATE',
             count: 1,
             networkConfiguration: {
@@ -102,9 +101,9 @@ subscriber.on("message", async (channel, message) => {
                     }
                 ]
             }
-        })
+        });
 
-        await ecsClient.send(command)
+        await ecsClient.send(command);
         await prismaClient.deployement.update({
             data: {
                 status: 'READY'
@@ -114,46 +113,41 @@ subscriber.on("message", async (channel, message) => {
             }
         });
     }
-})
+});
 
-async function initkafkaConsumer() {
+async function initKafkaConsumer() {
     await consumer.connect();
-    await consumer.subscribe({ topics: ['container-logs'], fromBeginning: true })
+    await consumer.subscribe({ topics: ['container-logs'], fromBeginning: true });
 
     await consumer.run({
-
         eachBatch: async function ({ batch, heartbeat, commitOffsetsIfNecessary, resolveOffset }) {
-
             const messages = batch.messages;
-            console.log(`Recv. ${messages.length} messages..`)
+            console.log(`Recv. ${messages.length} messages..`);
             for (const message of messages) {
                 if (!message.value) continue;
-                const stringMessage = message.value.toString()
-                const { PROJECT_ID, Deployment_Id, log } = JSON.parse(stringMessage)
-                console.log({ log, Deployment_Id })
+                const stringMessage = message.value.toString();
+                const { PROJECT_ID, Deployment_Id, log } = JSON.parse(stringMessage);
+                console.log({ log, Deployment_Id });
                 try {
                     const { query_id } = await client.insert({
                         table: 'log_events',
                         values: [{ event_id: uuidv4(), deployment_id: Deployment_Id, log }],
                         format: 'JSONEachRow'
-                    })
-                    console.log(query_id)
-                    resolveOffset(message.offset)
-                    await commitOffsetsIfNecessary(message.offset)
-                    await heartbeat()
+                    });
+                    console.log(query_id);
+                    resolveOffset(message.offset);
+                    await commitOffsetsIfNecessary(message.offset);
+                    await heartbeat();
                 } catch (err) {
-                    console.log(err)
+                    console.log(err);
                 }
-
             }
         }
-    })
+    });
 }
-initkafkaConsumer()
+initKafkaConsumer();
 
-
-
-const app = express()
+const app = express();
 app.listen(9004, () => {
-    console.log(`server started at port 9003`)
-})
+    console.log(`server started at port 9004`);
+});
